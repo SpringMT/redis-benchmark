@@ -96,7 +96,7 @@ func (rb *redisBench) run() error {
 		if hb.Incr != -1 {
 			if _, ok := incrRusult[hb.Incr]; ok {
 				heartBeatResult[unixTime]["duplicated"]++
-				rb.logf(info, "duplicate!!! %d", hb.Incr)
+				rb.logf(warn, "duplicate!!! %d", hb.Incr)
 			} else {
 				incrRusult[hb.Incr] = 1
 			}
