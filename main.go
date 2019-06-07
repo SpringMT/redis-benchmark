@@ -71,6 +71,7 @@ func (rb *redisBench) run() error {
 			}
 			rand.Seed(time.Now().UnixNano())
 			sleepDuration := rb.Sleep + rand.Intn(rb.Sleep)
+			rb.logf(info, "sleep %ds", sleepDuration)
 			time.Sleep(time.Duration(sleepDuration) * time.Millisecond)
 			defer func() {
 				wg.Done()
