@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"runtime"
 	"sort"
@@ -36,6 +37,12 @@ type HeartBeat struct {
 	Status HeartBeatStatus
 }
 
+type heartBeatResultPerSec struct {
+	Success    int
+	Failed     int
+	Duplicated int
+}
+
 func (rb *redisBench) run() error {
 	log.SetFlags(0)
 	log.SetOutput(os.Stdout)
@@ -44,8 +51,8 @@ func (rb *redisBench) run() error {
 
 	var wg sync.WaitGroup
 	before := MemConsumed()
-	concurrentStream := make(chan bool, rb.Concurrent)
-	haertBeatStream := make(chan HeartBeat, rb.RequestNum)
+	concurrentStream := make(chan interface{}, rb.Concurrent)
+	heartBeatStream := make(chan HeartBeat, rb.RequestNum)
 	for i := 0; i < rb.RequestNum; i++ {
 		wg.Add(1)
 		concurrentStream <- true
@@ -56,50 +63,55 @@ func (rb *redisBench) run() error {
 			incr := pipe.Incr("pipeline_counter")
 			_, err := pipe.Exec()
 			if err == nil {
-				haertBeatStream <- HeartBeat{Incr: incr.Val(), Time: now(), Status: Success}
+				heartBeatStream <- HeartBeat{Incr: incr.Val(), Time: now(), Status: Success}
 				rb.logf(info, "%d", incr.Val())
 			} else {
-				haertBeatStream <- HeartBeat{Incr: -1, Time: now(), Status: Failed}
+				heartBeatStream <- HeartBeat{Time: now(), Status: Failed}
 				rb.logf(warn, "error %s", err)
 			}
-			time.Sleep(time.Duration(rb.Sleep) * time.Millisecond)
+			rand.Seed(time.Now().UnixNano())
+			sleepDuration := rb.Sleep + rand.Intn(rb.Sleep)
+			time.Sleep(time.Duration(sleepDuration) * time.Millisecond)
 			defer func() {
 				wg.Done()
-				if client != nil {
-					client.Close()
-				}
+				client.Close()
 				<-concurrentStream
 			}()
 		}()
 	}
 	wg.Wait()
-	close(haertBeatStream)
+	// channelはcloseしないとメモリリークの原因になる
+	close(concurrentStream)
+	close(heartBeatStream)
 	incrRusult := map[int64]int{}
-	heartBeatResult := map[int64]map[string]int{}
+	heartBeatResult := map[int64]*heartBeatResultPerSec{}
 	m := make(map[int64]bool)
 	times := []int64{}
-	for hb := range haertBeatStream {
+	for hb := range heartBeatStream {
 		unixTime := hb.Time.Unix()
 		if !m[unixTime] {
 			m[unixTime] = true
 			times = append(times, unixTime)
 		}
 		if _, ok := heartBeatResult[unixTime]; !ok {
-			heartBeatResult[unixTime] = map[string]int{"success": 0, "failed": 0, "duplicated": 0}
+			heartBeatResult[unixTime] = &heartBeatResultPerSec{
+				Success:    0,
+				Failed:     0,
+				Duplicated: 0,
+			}
 		}
 		if hb.Status == Success {
-			heartBeatResult[unixTime]["success"]++
-		} else {
-			heartBeatResult[unixTime]["failed"]++
-		}
-
-		if hb.Incr != -1 {
-			if _, ok := incrRusult[hb.Incr]; ok {
-				heartBeatResult[unixTime]["duplicated"]++
-				rb.logf(warn, "duplicate!!! %d", hb.Incr)
-			} else {
-				incrRusult[hb.Incr] = 1
+			heartBeatResult[unixTime].Success++
+			if hb.Incr != 0 {
+				if _, ok := incrRusult[hb.Incr]; ok {
+					heartBeatResult[unixTime].Duplicated++
+					rb.logf(warn, "duplicate!!! %d", hb.Incr)
+				} else {
+					incrRusult[hb.Incr] = 1
+				}
 			}
+		} else {
+			heartBeatResult[unixTime].Failed++
 		}
 	}
 
@@ -108,7 +120,7 @@ func (rb *redisBench) run() error {
 	})
 
 	for _, v := range times {
-		fmt.Println(time.Unix(v, 0), heartBeatResult[v]["success"], heartBeatResult[v]["failed"], heartBeatResult[v]["duplicated"])
+		fmt.Println(time.Unix(v, 0), heartBeatResult[v].Success, heartBeatResult[v].Failed, heartBeatResult[v].Duplicated)
 	}
 	after := MemConsumed()
 	rb.logf(info, "%.3f kb", float64(after-before)/1000)
