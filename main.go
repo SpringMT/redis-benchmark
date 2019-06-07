@@ -31,6 +31,7 @@ const (
 )
 
 type HeartBeat struct {
+	Incr   int64
 	Time   *time.Time
 	Status HeartBeatStatus
 }
@@ -44,7 +45,6 @@ func (rb *redisBench) run() error {
 	var wg sync.WaitGroup
 	before := MemConsumed()
 	concurrentStream := make(chan bool, rb.Concurrent)
-	incrResultStream := make(chan int64, rb.RequestNum)
 	haertBeatStream := make(chan HeartBeat, rb.RequestNum)
 	for i := 0; i < rb.RequestNum; i++ {
 		wg.Add(1)
@@ -56,11 +56,10 @@ func (rb *redisBench) run() error {
 			incr := pipe.Incr("pipeline_counter")
 			_, err := pipe.Exec()
 			if err == nil {
-				incrResultStream <- incr.Val()
-				haertBeatStream <- HeartBeat{Time: now(), Status: Success}
+				haertBeatStream <- HeartBeat{Incr: incr.Val(), Time: now(), Status: Success}
 				rb.logf(info, "%d", incr.Val())
 			} else {
-				haertBeatStream <- HeartBeat{Time: now(), Status: Failed}
+				haertBeatStream <- HeartBeat{Incr: -1, Time: now(), Status: Failed}
 				rb.logf(warn, "error %s", err)
 			}
 			time.Sleep(time.Duration(rb.Sleep) * time.Millisecond)
@@ -74,16 +73,8 @@ func (rb *redisBench) run() error {
 		}()
 	}
 	wg.Wait()
-	close(incrResultStream)
-	incrRusult := map[int64]int{}
-	for incr := range incrResultStream {
-		if _, ok := incrRusult[incr]; ok {
-			fmt.Println("duplicate!!!", incr)
-		} else {
-			incrRusult[incr] = 1
-		}
-	}
 	close(haertBeatStream)
+	incrRusult := map[int64]int{}
 	heartBeatResult := map[int64]map[string]int{}
 	m := make(map[int64]bool)
 	times := []int64{}
@@ -94,12 +85,21 @@ func (rb *redisBench) run() error {
 			times = append(times, unixTime)
 		}
 		if _, ok := heartBeatResult[unixTime]; !ok {
-			heartBeatResult[unixTime] = map[string]int{"success": 0, "failed": 0}
+			heartBeatResult[unixTime] = map[string]int{"success": 0, "failed": 0, "duplicated": 0}
 		}
 		if hb.Status == Success {
 			heartBeatResult[unixTime]["success"]++
 		} else {
 			heartBeatResult[unixTime]["failed"]++
+		}
+
+		if hb.Incr != -1 {
+			if _, ok := incrRusult[hb.Incr]; ok {
+				heartBeatResult[unixTime]["duplicated"]++
+				rb.logf(info, "duplicate!!! %d", hb.Incr)
+			} else {
+				incrRusult[hb.Incr] = 1
+			}
 		}
 	}
 
@@ -108,7 +108,7 @@ func (rb *redisBench) run() error {
 	})
 
 	for _, v := range times {
-		fmt.Println(time.Unix(v, 0), heartBeatResult[v]["success"], heartBeatResult[v]["failed"])
+		fmt.Println(time.Unix(v, 0), heartBeatResult[v]["success"], heartBeatResult[v]["failed"], heartBeatResult[v]["duplicated"])
 	}
 	after := MemConsumed()
 	rb.logf(info, "%.3f kb", float64(after-before)/1000)
