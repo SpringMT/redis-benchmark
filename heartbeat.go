@@ -70,7 +70,7 @@ func (result *heartBeatResults) show() {
 		fmt.Println(time.Unix(v, 0), res.Success, res.Failed, duplicated)
 	}
 	for k, v := range duplicatedResult {
-		fmt.Printf("Incremented Valu %d is duplicated at %s\n", k, strings.Join(v, ","))
+		fmt.Printf("Incremented Value %d is duplicated at %s\n", k, strings.Join(v, ","))
 	}
 }
 
