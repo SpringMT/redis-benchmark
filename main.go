@@ -6,9 +6,10 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"os/signal"
 	"runtime"
-	"sort"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Songmu/wrapcommander"
@@ -24,107 +25,51 @@ type redisBench struct {
 	outStream, errStream io.Writer
 }
 
-type HeartBeatStatus int
-
-const (
-	Success HeartBeatStatus = iota
-	Failed
-)
-
-type HeartBeat struct {
-	Incr   int64
-	Time   *time.Time
-	Status HeartBeatStatus
-}
-
-type heartBeatResultPerSec struct {
-	Success    int
-	Failed     int
-	Duplicated int
-}
-
 func (rb *redisBench) run() error {
 	log.SetFlags(0)
 	log.SetOutput(os.Stdout)
-
 	rb.log(debug, "main start")
 
 	var wg sync.WaitGroup
 	before := MemConsumed()
 	concurrentStream := make(chan interface{}, rb.Concurrent)
-	heartBeatStream := make(chan HeartBeat, rb.RequestNum)
+	heartBeatStream := make(chan heartBeat, rb.RequestNum)
+	quit := make(chan os.Signal)
+	signal.Notify(quit, syscall.SIGINT)
 	for i := 0; i < rb.RequestNum; i++ {
 		wg.Add(1)
 		concurrentStream <- true
 		go func() {
 			rb.log(debug, "redis incr start")
 			client := RedisNewClient(rb.Host)
-			pipe := client.Pipeline()
-			incr := pipe.Incr("pipeline_counter")
-			_, err := pipe.Exec()
+			res, err := client.increment("pipeline_counter")
 			if err == nil {
-				heartBeatStream <- HeartBeat{Incr: incr.Val(), Time: now(), Status: Success}
-				rb.logf(info, "%d", incr.Val())
+				heartBeatStream <- heartBeat{Incr: res, Time: now(), Status: Success}
+				rb.logf(info, "%d", res)
 			} else {
-				heartBeatStream <- HeartBeat{Time: now(), Status: Failed}
+				heartBeatStream <- heartBeat{Time: now(), Status: Failed}
 				rb.logf(warn, "error %s", err)
 			}
-			rand.Seed(time.Now().UnixNano())
-			sleepDuration := rb.Sleep + rand.Intn(rb.Sleep)
-			rb.logf(info, "sleep %ds", sleepDuration)
-			time.Sleep(time.Duration(sleepDuration) * time.Millisecond)
+			time.Sleep(time.Duration(rb.Sleep+rand.Intn(rb.Sleep)) * time.Millisecond)
 			defer func() {
 				wg.Done()
-				client.Close()
+				client.close()
 				<-concurrentStream
 			}()
 		}()
 	}
 	wg.Wait()
+	after := MemConsumed()
+	rb.logf(info, "Memory %.3f kb", float64(after-before)/1000)
 	// channelはcloseしないとメモリリークの原因になる
 	close(concurrentStream)
 	close(heartBeatStream)
-	incrRusult := map[int64]int{}
-	heartBeatResult := map[int64]*heartBeatResultPerSec{}
-	m := make(map[int64]bool)
-	times := []int64{}
+	results := NewHeartBeatResult()
 	for hb := range heartBeatStream {
 		unixTime := hb.Time.Unix()
-		if !m[unixTime] {
-			m[unixTime] = true
-			times = append(times, unixTime)
-		}
-		if _, ok := heartBeatResult[unixTime]; !ok {
-			heartBeatResult[unixTime] = &heartBeatResultPerSec{
-				Success:    0,
-				Failed:     0,
-				Duplicated: 0,
-			}
-		}
-		if hb.Status == Success {
-			heartBeatResult[unixTime].Success++
-			if hb.Incr != 0 {
-				if _, ok := incrRusult[hb.Incr]; ok {
-					heartBeatResult[unixTime].Duplicated++
-					rb.logf(warn, "duplicate!!! %d", hb.Incr)
-				} else {
-					incrRusult[hb.Incr] = 1
-				}
-			}
-		} else {
-			heartBeatResult[unixTime].Failed++
-		}
+		results.add(unixTime, hb.Incr, hb.Status)
 	}
-
-	sort.Slice(times, func(i, j int) bool {
-		return times[i] < times[j]
-	})
-
-	for _, v := range times {
-		fmt.Println(time.Unix(v, 0), heartBeatResult[v].Success, heartBeatResult[v].Failed, heartBeatResult[v].Duplicated)
-	}
-	after := MemConsumed()
-	rb.logf(info, "%.3f kb", float64(after-before)/1000)
+	results.show()
 	return nil
 }
 
@@ -163,5 +108,6 @@ func Run(args []string) int {
 }
 
 func main() {
+	rand.Seed(time.Now().UnixNano())
 	os.Exit(Run(os.Args[1:]))
 }

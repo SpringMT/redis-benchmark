@@ -4,9 +4,24 @@ import (
 	"github.com/go-redis/redis"
 )
 
+type RedisClient struct {
+	Client *redis.Client
+}
+
+func (rc *RedisClient) increment(key string) (int64, error) {
+	pipe := rc.Client.Pipeline()
+	incr := pipe.Incr(key)
+	_, err := pipe.Exec()
+	return incr.Val(), err
+}
+
+func (rc *RedisClient) close() {
+	rc.Client.Close()
+}
+
 // RedisNewClient Redisクライアントを返す
 // https://godoc.org/github.com/go-redis/redis#Options
-func RedisNewClient(host string) *redis.Client {
+func RedisNewClient(host string) RedisClient {
 	client := redis.NewClient(&redis.Options{
 		Addr:     host + ":6379",
 		Password: "", // no password set
@@ -22,5 +37,5 @@ func RedisNewClient(host string) *redis.Client {
 	//	fmt.Println(pong, err)
 	//}
 	// Output: PONG <nil>
-	return client
+	return RedisClient{Client: client}
 }
