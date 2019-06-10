@@ -42,12 +42,21 @@ func (rb *redisBench) run() error {
 		go func() {
 			rb.log(debug, "redis incr start")
 			client := RedisNewClient(rb.Host)
+			beginTime := time.Now()
 			res, err := client.increment("pipeline_counter")
 			if err == nil {
-				heartBeatStream <- heartBeat{Incr: res, Time: now(), Status: Success}
+				heartBeatStream <- heartBeat{
+					Time:     now(),
+					Status:   Success,
+					Incr:     res,
+					Duration: time.Since(beginTime),
+				}
 				rb.logf(info, "%d", res)
 			} else {
-				heartBeatStream <- heartBeat{Time: now(), Status: Failed}
+				heartBeatStream <- heartBeat{
+					Time:   now(),
+					Status: Failed,
+				}
 				rb.logf(warn, "error %s", err)
 			}
 			time.Sleep(time.Duration(rb.Sleep+rand.Intn(rb.Sleep)) * time.Millisecond)
@@ -66,8 +75,7 @@ func (rb *redisBench) run() error {
 	close(heartBeatStream)
 	results := NewHeartBeatResult()
 	for hb := range heartBeatStream {
-		unixTime := hb.Time.Unix()
-		results.add(unixTime, hb.Incr, hb.Status)
+		results.add(hb)
 	}
 	results.show()
 	return nil
