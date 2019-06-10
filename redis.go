@@ -15,6 +15,13 @@ func (rc *RedisClient) increment(key string) (int64, error) {
 	return incr.Val(), err
 }
 
+func (rc *RedisClient) incrementWithTx(key string) (int64, error) {
+	pipe := rc.Client.TxPipeline()
+	incr := pipe.Incr(key)
+	_, err := pipe.Exec()
+	return incr.Val(), err
+}
+
 func (rc *RedisClient) close() {
 	rc.Client.Close()
 }

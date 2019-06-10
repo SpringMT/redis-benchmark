@@ -19,6 +19,7 @@ type redisBench struct {
 	Concurrent           int    `short:"c" default:"50" description:"並列接続数"`
 	RequestNum           int    `short:"n" default:"100" description:"リクエスト総数"`
 	Sleep                int    `short:"s" default:"1000" description:"スリープ ミリ秒"`
+	WithTx               bool   `short:"t" description:"トランザクションの有無"`
 	Verbose              []bool `short:"v" long:"verbose" description:"verbose output. it can be stacked like -vv for more detailed log"`
 	outStream, errStream io.Writer
 }
@@ -39,7 +40,13 @@ func (rb *redisBench) run() error {
 			rb.log(debug, "redis incr start")
 			client := RedisNewClient(rb.Host)
 			beginTime := time.Now()
-			res, err := client.increment("pipeline_counter")
+			var res int64
+			var err error
+			if rb.WithTx {
+				res, err = client.incrementWithTx("pipeline_counter")
+			} else {
+				res, err = client.increment("pipeline_counter")
+			}
 			if err == nil {
 				heartBeatStream <- heartBeat{
 					Time:     now(),
