@@ -98,8 +98,8 @@ func calcMinAndMaxAndAve(durations []time.Duration) (minMillSec float64, maxMill
 			minDuration = duration
 		}
 	}
-	min := float64(minDuration / time.Millisecond)
-	max := float64(maxDuration / time.Millisecond)
+	min := float64(minDuration) / float64(time.Millisecond)
+	max := float64(maxDuration) / float64(time.Millisecond)
 	ave := float64(float64(sumDuration/time.Millisecond) / float64(count))
 	return min, max, ave
 }
