@@ -6,10 +6,8 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"os/signal"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Songmu/wrapcommander"
@@ -34,8 +32,6 @@ func (rb *redisBench) run() error {
 	before := MemConsumed()
 	concurrentStream := make(chan interface{}, rb.Concurrent)
 	heartBeatStream := make(chan heartBeat, rb.RequestNum)
-	quit := make(chan os.Signal)
-	signal.Notify(quit, syscall.SIGINT)
 	for i := 0; i < rb.RequestNum; i++ {
 		wg.Add(1)
 		concurrentStream <- true
